@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Screen Recorder → MP4</title>
+<style>
+  :root {
+    --bg: #fcefe1;
+    --panel: #fffaf4;
+    --panel-2: #fae6d6;
+    --line: #f1d9c8;
+    --text: #4a2e38;
+    --muted: #b6939a;
+    --rec: #e8557f;
+    --rec-soft: #f8cdd9;
+    --pink-on: #ee7ba3;
+    --paused: #cf85a0;
+    --stage: #271b22;
+    --mono: "SF Mono", "JetBrains Mono", "Cascadia Code", ui-monospace, Menlo, Consolas, monospace;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; min-height: 100vh;
+    background: radial-gradient(1200px 600px at 50% -10%, #fff4e6 0%, var(--bg) 60%);
+    color: var(--text); font-family: var(--sans); -webkit-font-smoothing: antialiased;
+  }
+  body { display: flex; align-items: center; justify-content: center; padding: 28px; }
+
+  .device {
+    width: 100%; max-width: 520px;
+    background: linear-gradient(180deg, var(--panel) 0%, #fff1e2 100%);
+    border: 1px solid var(--line); border-radius: 20px;
+    box-shadow: 0 1px 0 rgba(255,255,255,0.7) inset, 0 30px 60px -28px rgba(205,130,110,0.42);
+    overflow: hidden;
+  }
+  .head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 18px 22px; border-bottom: 1px solid var(--line);
+  }
+  .brand { display: flex; align-items: center; gap: 11px; font-weight: 600; letter-spacing: -0.01em; font-size: 15px; }
+  .brand .glyph { width: 22px; height: 22px; border-radius: 6px; border: 2px solid var(--rec); position: relative; flex: none; }
+  .brand .glyph::after { content: ""; position: absolute; inset: 4px; border-radius: 50%; background: var(--rec); }
+  .badge {
+    font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: 0.08em;
+    color: var(--rec); border: 1px solid var(--rec-soft); background: rgba(232,85,127,0.08);
+    padding: 3px 7px; border-radius: 5px;
+  }
+
+  .status { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+  body[data-state="recording"] .dot { background: var(--rec); animation: pulse 1.4s ease-out infinite; }
+  body[data-state="paused"] .dot { background: var(--paused); }
+  body[data-state="recording"] .status, body[data-state="paused"] .status, body[data-state="converting"] .status { color: var(--text); }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(232,85,127,0.5); }
+    70% { box-shadow: 0 0 0 9px rgba(232,85,127,0); }
+    100% { box-shadow: 0 0 0 0 rgba(232,85,127,0); }
+  }
+  @media (prefers-reduced-motion: reduce) { body[data-state="recording"] .dot { animation: none; } }
+
+  .counter { padding: 30px 22px 14px; text-align: center; }
+  .time {
+    font-family: var(--mono); font-size: 58px; font-weight: 500; letter-spacing: 0.02em;
+    font-variant-numeric: tabular-nums; color: var(--muted); transition: color 0.25s, text-shadow 0.25s; line-height: 1;
+  }
+  body[data-state="recording"] .time { color: var(--rec); text-shadow: 0 0 26px rgba(232,85,127,0.28); }
+  body[data-state="paused"] .time { color: var(--paused); }
+  .time .ms { font-size: 26px; color: var(--muted); }
+  .sub { margin-top: 9px; font-size: 12px; color: var(--muted); min-height: 16px; }
+
+  .progress { margin: 12px 22px 0; height: 6px; border-radius: 99px; background: var(--panel-2); border: 1px solid var(--line); overflow: hidden; display: none; }
+  .progress.show { display: block; }
+  .progress .bar { height: 100%; width: 0%; background: var(--rec); transition: width 0.2s; }
+
+  .stage {
+    margin: 14px 22px 0; border-radius: 12px; border: 1px solid #e7ccbd;
+    background: var(--stage) repeating-linear-gradient(45deg, #2e2129 0 12px, #271b22 12px 24px);
+    aspect-ratio: 16 / 9; overflow: hidden; display: flex; align-items: center; justify-content: center; position: relative;
+    box-shadow: inset 0 2px 12px rgba(0,0,0,0.35);
+  }
+  .stage video { width: 100%; height: 100%; object-fit: contain; display: none; background: #1c1418; }
+  .stage .placeholder { color: #b89aa3; font-size: 13px; text-align: center; padding: 0 24px; line-height: 1.5; }
+  .hud {
+    position: absolute; top: 10px; left: 10px; display: none; flex-direction: column; gap: 3px;
+    background: rgba(20,12,16,0.62); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+    border: 1px solid rgba(255,255,255,0.12); border-radius: 9px; padding: 9px 11px;
+    font-family: var(--mono); font-size: 11px; color: #f3e3e9; min-width: 138px; pointer-events: none;
+  }
+  body[data-state="recording"] .hud, body[data-state="paused"] .hud { display: flex; }
+  .hud .hud-row { display: flex; justify-content: space-between; gap: 14px; }
+  .hud .hud-row span { color: #c8a9b3; }
+  .hud .hud-row b { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .hud.warn { border-color: var(--rec); }
+  .hud.warn .hud-row b { color: #ff9ab8; }
+  .popout {
+    position: absolute; top: 10px; right: 10px; width: 30px; height: 30px; border-radius: 8px;
+    background: rgba(20,12,16,0.62); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+    border: 1px solid rgba(255,255,255,0.14); color: #f3e3e9; font-size: 15px; line-height: 1;
+    display: none; align-items: center; justify-content: center; cursor: pointer;
+  }
+  body[data-state="recording"] .popout, body[data-state="paused"] .popout { display: flex; }
+  .popout:hover { background: rgba(45,26,34,0.82); }
+
+  .options { padding: 18px 22px 4px; display: grid; gap: 10px; }
+  .row { display: flex; align-items: center; justify-content: space-between; background: var(--panel-2); border: 1px solid var(--line); border-radius: 11px; padding: 13px 15px; }
+  .row .label { display: flex; flex-direction: column; gap: 2px; }
+  .row .label .t { font-size: 14px; font-weight: 500; }
+  .row .label .d { font-size: 11px; color: var(--muted); }
+
+  .seg { display: inline-flex; background: #f0e0d6; border: 1px solid var(--line); border-radius: 9px; padding: 3px; gap: 2px; }
+  .seg button { background: transparent; color: var(--muted); font-size: 12.5px; font-weight: 600; padding: 6px 13px; border-radius: 7px; border: none; cursor: pointer; transition: background 0.15s, color 0.15s; }
+  .seg button.active { background: var(--rec); color: #fff; }
+  .seg button:disabled { cursor: not-allowed; }
+
+  .switch { position: relative; width: 44px; height: 26px; flex: none; }
+  .switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+  .switch .track { position: absolute; inset: 0; border-radius: 99px; background: #f0e0d6; border: 1px solid var(--line); transition: background 0.18s, border-color 0.18s; }
+  .switch .thumb { position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--muted); transition: transform 0.18s, background 0.18s; }
+  .switch input:checked ~ .track { background: rgba(238,123,163,0.2); border-color: var(--pink-on); }
+  .switch input:checked ~ .thumb { transform: translateX(18px); background: var(--pink-on); }
+  .switch input:focus-visible ~ .track { outline: 2px solid var(--rec); outline-offset: 2px; }
+  .switch input:disabled { cursor: not-allowed; }
+  .row.locked { opacity: 0.5; }
+
+  .controls { padding: 20px 22px 24px; display: flex; align-items: center; justify-content: center; gap: 14px; }
+  button { font-family: var(--sans); cursor: pointer; border: none; transition: transform 0.08s, background 0.18s, opacity 0.18s; }
+  button:active { transform: scale(0.96); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button:focus-visible { outline: 2px solid var(--rec); outline-offset: 2px; }
+  .btn-rec { flex: 1; height: 54px; border-radius: 13px; background: var(--rec); color: #fff; font-size: 15px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; gap: 10px; box-shadow: 0 8px 20px -10px rgba(232,85,127,0.7); }
+  .btn-rec:hover:not(:disabled) { background: #ec6790; }
+  .btn-rec .ico { width: 14px; height: 14px; border-radius: 50%; background: #fff; }
+  .btn-secondary { height: 54px; padding: 0 20px; border-radius: 13px; background: var(--panel); border: 1px solid var(--line); color: var(--text); font-size: 14px; font-weight: 500; display: inline-flex; align-items: center; justify-content: center; gap: 9px; }
+  .btn-secondary:hover:not(:disabled) { background: var(--panel-2); }
+  .btn-stop { background: var(--rec); color: #fff; border: none; box-shadow: 0 8px 20px -10px rgba(232,85,127,0.7); }
+  .btn-stop:hover:not(:disabled) { background: #ec6790; }
+  .btn-stop .ico { width: 13px; height: 13px; border-radius: 3px; background: #fff; }
+  .btn-pause .ico { width: 12px; height: 13px; border-left: 4px solid currentColor; border-right: 4px solid currentColor; box-sizing: border-box; }
+  .btn-resume .ico { width: 0; height: 0; border-top: 7px solid transparent; border-bottom: 7px solid transparent; border-left: 11px solid currentColor; }
+  .hidden { display: none !important; }
+
+  .footer { padding: 0 22px 20px; font-size: 11px; color: var(--muted); line-height: 1.55; text-align: center; }
+  .footer b { color: #6b4753; font-weight: 600; }
+  .toast { margin: 0 22px 16px; padding: 11px 14px; border-radius: 10px; font-size: 12.5px; line-height: 1.45; display: none; }
+  .toast.err { display: block; background: rgba(232,85,127,0.1); border: 1px solid var(--rec-soft); color: #b03062; }
+  .toast.info { display: block; background: rgba(207,133,160,0.14); border: 1px solid #e2bfcc; color: #8a5169; }
+</style>
+</head>
+<body data-state="idle">
+  <div class="device">
+    <div class="head">
+      <div class="brand"><span class="glyph"></span>Screen Recorder <span class="badge">MP4</span></div>
+      <div class="status"><span class="dot"></span><span id="statusText">Ready to record</span></div>
+    </div>
+
+    <div class="counter">
+      <div class="time" id="time">00:00<span class="ms">.0</span></div>
+      <div class="sub" id="subText">Video + audio in MP4, no time limit</div>
+    </div>
+
+    <div class="progress" id="progress"><div class="bar" id="progressBar"></div></div>
+
+    <div class="stage">
+      <video id="preview" muted playsinline></video>
+      <div class="placeholder" id="placeholder">Preview appears here<br>once recording starts</div>
+      <div class="hud" id="hud">
+        <div class="hud-row"><span>Format</span><b id="hudFmt">—</b></div>
+        <div class="hud-row"><span>Recorded</span><b id="hudRec">0 MB</b></div>
+        <div class="hud-row"><span>Free space</span><b id="hudFree">—</b></div>
+        <div class="hud-row"><span>Time left</span><b id="hudLeft">—</b></div>
+      </div>
+      <button class="popout" id="btnPip" title="Pop out the counter into a floating window">⤢</button>
+    </div>
+
+    <div id="toast" class="toast"></div>
+
+    <div class="options">
+      <div class="row" id="rowQuality">
+        <span class="label"><span class="t">Quality</span><span class="d" id="qDesc">1080p · ~4 Mbps · MP4</span></span>
+        <div class="seg" id="seg">
+          <button type="button" data-q="low">Low</button>
+          <button type="button" data-q="med" class="active">Medium</button>
+          <button type="button" data-q="high">High</button>
+        </div>
+      </div>
+
+      <label class="row" id="rowSystem">
+        <span class="label"><span class="t">System audio</span><span class="d">Sound from the tab or screen</span></span>
+        <span class="switch"><input type="checkbox" id="optSystem" checked><span class="track"></span><span class="thumb"></span></span>
+      </label>
+
+      <label class="row" id="rowMic">
+        <span class="label"><span class="t">Microphone</span><span class="d">Your voice from the mic</span></span>
+        <span class="switch"><input type="checkbox" id="optMic"><span class="track"></span><span class="thumb"></span></span>
+      </label>
+
+      <label class="row" id="rowUniversal">
+        <span class="label"><span class="t">Universal MP4</span><span class="d">Plays everywhere, starts instantly</span></span>
+        <span class="switch"><input type="checkbox" id="optUniversal" checked><span class="track"></span><span class="thumb"></span></span>
+      </label>
+    </div>
+
+    <div class="controls">
+      <button class="btn-rec" id="btnRec"><span class="ico"></span>Start recording</button>
+      <button class="btn-secondary btn-pause hidden" id="btnPause"><span class="ico"></span><span>Pause</span></button>
+      <button class="btn-secondary btn-stop hidden" id="btnStop"><span class="ico"></span><span>Stop</span></button>
+    </div>
+
+    <div class="footer" id="footer"></div>
+  </div>
+
+<script>
+(() => {
+  const el = (id) => document.getElementById(id);
+  const body = document.body;
+  const timeEl = el('time'), subEl = el('subText'), statusEl = el('statusText');
+  const preview = el('preview'), placeholder = el('placeholder'), toast = el('toast');
+  const btnRec = el('btnRec'), btnPause = el('btnPause'), btnStop = el('btnStop');
+  const optSystem = el('optSystem'), optMic = el('optMic'), optUniversal = el('optUniversal');
+  const progress = el('progress'), progressBar = el('progressBar'), seg = el('seg');
+  const hud = el('hud'), hudRec = el('hudRec'), hudFree = el('hudFree'), hudLeft = el('hudLeft'), hudFmt = el('hudFmt'), btnPip = el('btnPip');
+
+  const supportsFS = typeof window.showSaveFilePicker === 'function';
+
+  const MP4_CANDIDATES = [
+    'video/mp4;codecs=avc1.640028,mp4a.40.2',
+    'video/mp4;codecs=avc1.64003E,mp4a.40.2',
+    'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+    'video/mp4',
+  ];
+  const WEBM_CANDIDATES = [
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm',
+  ];
+  function firstSupported(list) {
+    if (!window.MediaRecorder) return null;
+    for (const t of list) { if (MediaRecorder.isTypeSupported(t)) return t; }
+    return null;
+  }
+  const nativeMp4Type = firstSupported(MP4_CANDIDATES);
+  const recordType = nativeMp4Type || firstSupported(WEBM_CANDIDATES) || 'video/webm';
+  const nativeMp4 = !!nativeMp4Type;
+  const needsConversion = !nativeMp4; // non-native must be transcoded to MP4
+  const fileExt = '.mp4'; // output is always MP4
+  const fmtName = nativeMp4 ? 'MP4' : 'MP4'; // converted to MP4 either way
+
+  const QUALITY = {
+    low:  { v: 1500000, a: 96000,  h: 720,  fps: 24, label: '720p · ~1.5 Mbps' },
+    med:  { v: 4000000, a: 128000, h: 1080, fps: 30, label: '1080p · ~4 Mbps' },
+    high: { v: 8000000, a: 192000, h: 0,    fps: 30, label: 'Native res · ~8 Mbps' },
+  };
+
+  let state = 'idle';
+  let quality = 'med';
+  let displayStream = null, micStream = null, audioCtx = null;
+  let recorder = null, fileWritable = null, writeQueue = Promise.resolve();
+  let memoryChunks = null, postMode = null; // 'remux' | 'transcode' | null
+  let startTime = 0, accumulated = 0, rafId = 0;
+  let recordedBytes = 0, freeBytes = null, statsTimer = 0, statsN = 0;
+  let autoStopping = false, autoStopReason = null, memCap = 1.2e9;
+  let capInfo = '', pip = null;
+  let frozen = false, lastFrameTs = 0, rvfcOn = false;
+  let lastBytesSnapshot = 0, staleSeconds = 0, deadWarned = false;
+  const SAFE_DISK_BYTES = 300e6; // keep at least ~300 MB free as a flush buffer
+  const SAFE_SECONDS = 30;       // stop if less than ~30s of space remains
+
+  function updateFooter() {
+    const f = el('footer');
+    if (!nativeMp4) {
+      f.innerHTML = "Your browser can't record MP4 directly, so the recording is <b>converted to MP4 after you stop</b> (needs internet the first time). Chrome or Edge are better for long recordings.";
+    } else if (optUniversal.checked) {
+      f.innerHTML = "After you stop, the recording is packaged into a <b>universal MP4</b> in memory. For very long recordings, turn off Universal MP4 to write straight to disk with no limit.";
+    } else {
+      f.innerHTML = "Records <b>straight to MP4 on disk</b> as you go — length is limited only by free disk space.";
+    }
+  }
+
+  function setState(s) {
+    state = s; body.dataset.state = s;
+    const map = { idle: 'Ready to record', recording: 'Recording', paused: 'Paused', finishing: 'Saving…', converting: 'Making MP4…' };
+    statusEl.textContent = map[s] || s;
+  }
+  function showToast(msg, kind) { toast.textContent = msg; toast.className = 'toast ' + kind; }
+  function clearToast() { toast.className = 'toast'; }
+
+  function fmt(ms) {
+    const total = Math.floor(ms / 100), tenths = total % 10, secs = Math.floor(total / 10);
+    const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60), s = secs % 60;
+    const pad = (n) => String(n).padStart(2, '0');
+    const base = h > 0 ? pad(h)+':'+pad(m)+':'+pad(s) : pad(m)+':'+pad(s);
+    return base + '<span class="ms">.' + tenths + '</span>';
+  }
+  function tick() {
+    const elapsed = accumulated + (state === 'recording' ? (performance.now() - startTime) : 0);
+    timeEl.innerHTML = fmt(elapsed);
+    rafId = requestAnimationFrame(tick);
+  }
+  function stamp() { return new Date().toISOString().slice(0,19).replace(/[:T]/g,'-'); }
+
+  function elapsedMs() { return accumulated + (state === 'recording' ? (performance.now() - startTime) : 0); }
+  function fmtBytes(n) {
+    if (n == null || !isFinite(n)) return '—';
+    if (n >= 1e9) return (n / 1e9).toFixed(2) + ' GB';
+    if (n >= 1e6) return (n / 1e6).toFixed(0) + ' MB';
+    if (n >= 1e3) return (n / 1e3).toFixed(0) + ' KB';
+    return Math.round(n) + ' B';
+  }
+  function fmtLeft(sec) {
+    if (sec == null || !isFinite(sec) || sec < 0) return '—';
+    if (sec > 172800) return '> 2 days';
+    const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = Math.floor(sec % 60);
+    if (h > 0) return h + 'h ' + m + 'm';
+    return (m > 0 ? m + 'm ' : '') + s + 's';
+  }
+  async function refreshFree() {
+    if (navigator.storage && navigator.storage.estimate) {
+      try { const e = await navigator.storage.estimate(); if (e && e.quota != null) freeBytes = Math.max(0, e.quota - (e.usage || 0)); }
+      catch (_) {}
+    }
+  }
+  function updateHud() {
+    const fmtStr = capInfo ? capInfo + ' · ' + fmtName : fmtName;
+    const recStr = fmtBytes(recordedBytes);
+    const freeStr = (freeBytes == null) ? '—' : '≈ ' + fmtBytes(freeBytes);
+    const secs = elapsedMs() / 1000;
+    const rate = secs > 1.5 ? recordedBytes / secs : 0; // bytes/sec
+    const left = (rate > 0 && freeBytes != null) ? freeBytes / rate : null;
+    const leftStr = fmtLeft(left);
+    hudFmt.textContent = fmtStr;
+    hudRec.textContent = recStr;
+    hudFree.textContent = freeStr;
+    hudLeft.textContent = leftStr;
+    const low = (freeBytes != null && freeBytes < 500e6) || (left != null && left < 120);
+    hud.classList.toggle('warn', low);
+    if (pip) {
+      pip.fmt.textContent = fmtStr; pip.rec.textContent = recStr;
+      pip.free.textContent = freeStr; pip.left.textContent = leftStr;
+      pip.win.document.body.style.background = low ? '#3a121f' : '#1b1016';
+    }
+  }
+
+  async function openPip() {
+    if (!('documentPictureInPicture' in window)) {
+      showToast('The floating window needs Chrome or Edge. The counter is shown on the preview here instead.', 'info');
+      return;
+    }
+    try {
+      const w = await documentPictureInPicture.requestWindow({ width: 250, height: 158 });
+      const d = w.document;
+      d.body.style.cssText = 'margin:0;background:#1b1016;color:#f3e3e9;font-family:ui-monospace,Menlo,Consolas,monospace;transition:background .2s';
+      const rows = [['Format','pf'],['Recorded','pr'],['Free space','pe'],['Time left','pl']]
+        .map(([t,id]) => '<div style="display:flex;justify-content:space-between;gap:16px"><span style="color:#c8a9b3">'+t+'</span><b id="'+id+'" style="font-weight:600">—</b></div>').join('');
+      d.body.innerHTML = '<div style="padding:13px 15px;display:flex;flex-direction:column;gap:7px;font-size:13px">'+rows+'</div>';
+      pip = { win: w, fmt: d.getElementById('pf'), rec: d.getElementById('pr'), free: d.getElementById('pe'), left: d.getElementById('pl') };
+      w.addEventListener('pagehide', () => { pip = null; });
+      updateHud();
+    } catch (e) { showToast('Could not open the floating window.', 'info'); }
+  }
+  function checkSafety() {
+    if (state !== 'recording' || autoStopping) return;
+    const secs = elapsedMs() / 1000;
+    const rate = secs > 1.5 ? recordedBytes / secs : 0;
+    if (fileWritable) {
+      // Writing straight to disk: stop while there's still room to flush the file.
+      if (freeBytes != null && freeBytes < SAFE_DISK_BYTES) return autoStop('lowdisk');
+      if (rate > 0 && freeBytes != null && (freeBytes / rate) < SAFE_SECONDS) return autoStop('lowdisk');
+    } else {
+      // Held in memory: guard RAM, and make sure there's disk room to save later.
+      if (recordedBytes >= memCap) return autoStop('memory');
+      if (freeBytes != null && freeBytes < recordedBytes + SAFE_DISK_BYTES) return autoStop('lowdisk');
+    }
+  }
+
+  function autoStop(reason) {
+    if (autoStopping || state === 'idle' || state === 'finishing' || state === 'converting') return;
+    autoStopping = true; autoStopReason = reason;
+    const msg = {
+      lowdisk: "Low on space — recording stopped automatically and saved, so you don't lose anything.",
+      memory: 'Memory limit reached — recording stopped automatically and saved.',
+      write: 'Saving failed mid-recording (likely out of space) — stopped and kept everything recorded so far.',
+    }[reason] || 'Recording stopped automatically and saved.';
+    showToast(msg, 'err');
+    stop();
+  }
+
+  function onFreeze() {
+    if (state !== 'recording' || frozen) return;
+    frozen = true;
+    accumulated += performance.now() - startTime;
+    try { recorder.pause(); } catch (_) {}
+    setState('paused');
+    hud.classList.add('warn');
+    hudFmt.textContent = '⚠ frozen';
+    statusEl.textContent = 'Video frozen — paused';
+    subEl.textContent = '⚠ Picture stopped updating — auto-paused. For fullscreen playback, record the whole screen.';
+    updateButtons();
+  }
+  function onUnfreeze() {
+    if (!frozen) return;
+    frozen = false;
+    if (state === 'paused') {
+      try { recorder.resume(); } catch (_) {}
+      startTime = performance.now();
+      setState('recording');
+      hud.classList.remove('warn');
+      subEl.textContent = fileWritable ? 'Writing MP4 to disk…' : 'Recording…';
+      updateButtons();
+    }
+  }
+
+  function startStats() {
+    recordedBytes = 0; freeBytes = null; statsN = 0; autoStopping = false; autoStopReason = null; capInfo = ''; frozen = false;
+    lastBytesSnapshot = 0; staleSeconds = 0; deadWarned = false;
+    const dm = navigator.deviceMemory; // GB, coarse (Chromium). Cap RAM use conservatively.
+    memCap = dm ? Math.min(dm * 1e9 * 0.4, 3e9) : 1.2e9;
+    refreshFree(); updateHud();
+    clearInterval(statsTimer);
+    statsTimer = setInterval(() => {
+      if ((statsN++ % 2) === 0) refreshFree();
+      updateHud(); checkSafety();
+      // Foreground-only frame-stall check; in the background we rely on the track 'mute' event.
+      if (rvfcOn && state === 'recording' && document.visibilityState === 'visible' && (performance.now() - lastFrameTs) > 2000) onFreeze();
+      // Dead-stream watchdog: almost no new bytes means neither video nor audio is coming in.
+      if (state === 'recording') {
+        if (recordedBytes - lastBytesSnapshot < 1500) staleSeconds++; else staleSeconds = 0;
+        lastBytesSnapshot = recordedBytes;
+        if (staleSeconds >= 6 && !deadWarned) {
+          deadWarned = true; hud.classList.add('warn');
+          showToast('⚠ Nothing is being recorded — no new video or audio is coming in. Stop and record the whole screen instead.', 'err');
+        }
+      } else { staleSeconds = 0; lastBytesSnapshot = recordedBytes; }
+    }, 1000);
+  }
+
+  function buildAudioTrack(wantSystem, wantMic) {
+    const sysTracks = displayStream ? displayStream.getAudioTracks() : [];
+    const micTracks = micStream ? micStream.getAudioTracks() : [];
+    const sources = [];
+    if (wantSystem && sysTracks.length) sources.push(new MediaStream(sysTracks));
+    if (wantMic && micTracks.length) sources.push(new MediaStream(micTracks));
+    if (sources.length === 0) return null;
+    if (sources.length === 1) return sources[0].getAudioTracks()[0];
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const dest = audioCtx.createMediaStreamDestination();
+    for (const s of sources) audioCtx.createMediaStreamSource(s).connect(dest);
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    return dest.stream.getAudioTracks()[0];
+  }
+
+  async function start() {
+    clearToast();
+    const wantSystem = optSystem.checked, wantMic = optMic.checked, wantUniversal = optUniversal.checked;
+
+    // Stream straight to disk only when recording native MP4 AND not post-processing.
+    const streamToDisk = nativeMp4 && !wantUniversal && supportsFS;
+    postMode = needsConversion ? 'transcode' : (wantUniversal ? 'remux' : null);
+
+    let handle = null;
+    if (streamToDisk) {
+      try {
+        handle = await window.showSaveFilePicker({
+          suggestedName: 'Screen-Recording-' + stamp() + '.mp4',
+          types: [{ description: 'MP4 video', accept: { 'video/mp4': ['.mp4'] } }],
+        });
+      } catch (e) { if (e.name === 'AbortError') return; }
+    }
+
+    const q = QUALITY[quality];
+    const videoConstraints = { frameRate: { ideal: q.fps }, displaySurface: 'monitor' };
+    if (q.h) { videoConstraints.height = { ideal: q.h, max: q.h }; videoConstraints.width = { max: Math.round(q.h * 16 / 9) }; }
+    try {
+      displayStream = await navigator.mediaDevices.getDisplayMedia({ video: videoConstraints, audio: wantSystem });
+    } catch (e) {
+      showToast('Could not access the screen. Allow screen capture and try again.', 'err');
+      cleanup(); return;
+    }
+
+    if (wantMic) {
+      try { micStream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+      catch (e) { showToast('Microphone unavailable — recording without it.', 'info'); micStream = null; }
+    }
+
+    preview.srcObject = new MediaStream(displayStream.getVideoTracks());
+    preview.style.display = 'block'; placeholder.style.display = 'none';
+    preview.play().catch(() => {});
+
+    const videoTrack = displayStream.getVideoTracks()[0];
+    const audioTrack = buildAudioTrack(wantSystem, wantMic);
+    const recordedStream = new MediaStream(audioTrack ? [videoTrack, audioTrack] : [videoTrack]);
+
+    const readCap = () => { const s = videoTrack.getSettings ? videoTrack.getSettings() : {}; if (s.width && s.height) { capInfo = Math.round(s.width) + '×' + Math.round(s.height); updateHud(); } };
+    readCap(); setTimeout(readCap, 800);
+
+    // Warn when capturing a single tab — fullscreen playback can freeze the picture.
+    const surf = (videoTrack.getSettings && videoTrack.getSettings().displaySurface) || '';
+    if (surf === 'browser')
+      showToast('Recording a browser tab. If a video goes fullscreen on the page, the picture can freeze — record the whole screen instead for fullscreen playback.', 'info');
+
+    // Freeze detection: the source stops sending frames (e.g. tab goes fullscreen / backgrounds).
+    videoTrack.addEventListener('mute', onFreeze);
+    videoTrack.addEventListener('unmute', onUnfreeze);
+    lastFrameTs = performance.now();
+    rvfcOn = typeof preview.requestVideoFrameCallback === 'function';
+    if (rvfcOn) {
+      const frameCb = () => { lastFrameTs = performance.now(); if (frozen) onUnfreeze(); if (rvfcOn) preview.requestVideoFrameCallback(frameCb); };
+      preview.requestVideoFrameCallback(frameCb);
+    }
+
+    if (wantSystem && !displayStream.getAudioTracks().length)
+      showToast('No system audio was shared. Enable "Share audio" in the capture dialog.', 'info');
+    if (!audioTrack)
+      showToast('No audio source — this recording will have NO sound. Turn on Microphone, or tick "Share audio" in the capture dialog.', 'err');
+
+    videoTrack.addEventListener('ended', () => { if (state !== 'idle') stop(); });
+
+    if (handle) { fileWritable = await handle.createWritable(); memoryChunks = null; }
+    else { fileWritable = null; memoryChunks = []; }
+
+    const opts = { mimeType: recordType, videoBitsPerSecond: q.v, audioBitsPerSecond: q.a };
+    try { recorder = new MediaRecorder(recordedStream, opts); }
+    catch (e) { try { recorder = new MediaRecorder(recordedStream, { mimeType: recordType }); } catch (_) { recorder = new MediaRecorder(recordedStream); } }
+
+    recorder.ondataavailable = (ev) => {
+      if (!ev.data || ev.data.size === 0) return;
+      recordedBytes += ev.data.size;
+      if (fileWritable) writeQueue = writeQueue.then(() => fileWritable.write(ev.data)).catch((err) => { console.error('write', err); autoStop('write'); });
+      else memoryChunks.push(ev.data);
+    };
+    recorder.onstop = finalize;
+
+    recorder.start(2000);
+    accumulated = 0; startTime = performance.now();
+    setState('recording');
+    subEl.textContent = fileWritable ? 'Writing MP4 to disk…' : 'Recording…';
+    startStats();
+    updateButtons(); cancelAnimationFrame(rafId); tick();
+  }
+
+  function togglePause() {
+    if (state === 'recording') { recorder.pause(); accumulated += performance.now() - startTime; setState('paused'); subEl.textContent = 'Recording paused'; }
+    else if (state === 'paused') { recorder.resume(); startTime = performance.now(); setState('recording'); subEl.textContent = fileWritable ? 'Writing MP4 to disk…' : 'Recording…'; }
+    updateButtons();
+  }
+
+  function stop() {
+    if (!recorder) return;
+    setState('finishing'); subEl.textContent = 'Finishing the file…'; updateButtons();
+    if (recorder.state !== 'inactive') recorder.stop();
+  }
+
+  async function loadFFmpeg() {
+    const ff = await import('https://esm.sh/@ffmpeg/ffmpeg@0.12');
+    const util = await import('https://esm.sh/@ffmpeg/util@0.12');
+    const ffmpeg = new ff.FFmpeg();
+    const base = 'https://unpkg.com/@ffmpeg/core@0.12/dist/umd';
+    await ffmpeg.load({
+      coreURL: await util.toBlobURL(base + '/ffmpeg-core.js', 'text/javascript'),
+      wasmURL: await util.toBlobURL(base + '/ffmpeg-core.wasm', 'application/wasm'),
+    });
+    return { ffmpeg, fetchFile: util.fetchFile };
+  }
+
+  // mode 'remux': repackage native MP4 (lossless, fast, adds faststart)
+  // mode 'transcode': re-encode WebM to H.264/AAC MP4
+  async function processToMp4(blob, mode) {
+    setState('converting');
+    subEl.textContent = 'Loading the MP4 packager…';
+    progress.classList.add('show'); progressBar.style.width = '0%';
+    const { ffmpeg, fetchFile } = await loadFFmpeg();
+    ffmpeg.on('progress', ({ progress: p }) => {
+      const pct = Math.max(0, Math.min(100, Math.round(p * 100)));
+      progressBar.style.width = pct + '%';
+      subEl.textContent = (mode === 'remux' ? 'Packaging MP4… ' : 'Converting to MP4… ') + pct + '%';
+    });
+    const inName = mode === 'transcode' ? 'in.webm' : 'in.mp4';
+    await ffmpeg.writeFile(inName, await fetchFile(blob));
+    const args = mode === 'transcode'
+      ? ['-i', inName, '-c:v', 'libx264', '-preset', 'veryfast', '-c:a', 'aac', '-movflags', '+faststart', 'out.mp4']
+      : ['-i', inName, '-c', 'copy', '-movflags', '+faststart', 'out.mp4'];
+    await ffmpeg.exec(args);
+    const data = await ffmpeg.readFile('out.mp4');
+    progress.classList.remove('show');
+    return new Blob([data.buffer], { type: 'video/mp4' });
+  }
+
+  async function saveBlob(blob, name) {
+    const isMp4 = name.endsWith('.mp4');
+    const accept = isMp4 ? { 'video/mp4': ['.mp4'] } : { 'video/webm': ['.webm'] };
+    if (supportsFS) {
+      try {
+        const h = await window.showSaveFilePicker({ suggestedName: name, types: [{ description: isMp4 ? 'MP4 video' : 'WebM video', accept }] });
+        const w = await h.createWritable(); await w.write(blob); await w.close(); return true;
+      } catch (e) { if (e.name === 'AbortError') return false; }
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    return true;
+  }
+
+  async function finalize() {
+    cancelAnimationFrame(rafId);
+    const looksEmpty = recordedBytes < 50000; // <50 KB ⇒ effectively nothing was captured
+    try {
+      if (fileWritable) {
+        try { await writeQueue; } catch (_) {}
+        try { await fileWritable.close(); subEl.textContent = 'Done — MP4 saved to disk'; }
+        catch (e) { showToast('Could not finish writing the file (likely no space). The part recorded before that should still be on disk.', 'err'); }
+      } else if (memoryChunks && memoryChunks.length) {
+        let blob = new Blob(memoryChunks, { type: recordType });
+        // If we stopped because memory was nearly full, skip the in-memory remux to avoid running out.
+        const skipRemux = (autoStopReason === 'memory' && postMode === 'remux');
+        if (skipRemux) showToast('Saved as a direct MP4 (skipped extra packaging to protect memory).', 'info');
+        if (postMode && !skipRemux) {
+          try { blob = await processToMp4(blob, postMode); }
+          catch (err) {
+            progress.classList.remove('show');
+            if (postMode === 'remux') {
+              showToast('Could not run the universal packager — saving the original MP4 instead.', 'info');
+              await saveBlob(new Blob(memoryChunks, { type: 'video/mp4' }), 'Screen-Recording-' + stamp() + '.mp4');
+            } else {
+              showToast('Could not convert to MP4: ' + (err.message || err) + '. Saving the original recording (.webm).', 'err');
+              await saveBlob(new Blob(memoryChunks, { type: recordType }), 'Screen-Recording-' + stamp() + '.webm');
+            }
+            cleanup(); return;
+          }
+        }
+        const outIsMp4 = nativeMp4 || (postMode === 'transcode');
+        const outBlob = (skipRemux || !postMode) ? new Blob(memoryChunks, { type: outIsMp4 ? 'video/mp4' : recordType }) : blob;
+        const ext = outIsMp4 ? '.mp4' : '.webm';
+        const saved = await saveBlob(outBlob, 'Screen-Recording-' + stamp() + ext);
+        subEl.textContent = saved ? 'Done — saved' : 'Save cancelled';
+      }
+    } catch (e) { showToast('Error while saving: ' + (e.message || e), 'err'); }
+    if (looksEmpty) showToast('⚠ This recording is basically empty — the capture wasn\'t sending video or audio. Try again recording the whole screen (and turn on Microphone for sound).', 'err');
+    cleanup();
+  }
+
+  function cleanup() {
+    clearInterval(statsTimer); statsTimer = 0; hud.classList.remove('warn');
+    autoStopping = false; autoStopReason = null; frozen = false; rvfcOn = false;
+    [displayStream, micStream].forEach((s) => { if (s) s.getTracks().forEach((t) => t.stop()); });
+    if (audioCtx) { audioCtx.close().catch(() => {}); audioCtx = null; }
+    displayStream = micStream = recorder = fileWritable = memoryChunks = null;
+    writeQueue = Promise.resolve();
+    preview.srcObject = null; preview.style.display = 'none'; placeholder.style.display = 'block';
+    progress.classList.remove('show');
+    setState('idle'); updateButtons();
+  }
+
+  function updateButtons() {
+    const idle = state === 'idle', busy = state === 'finishing' || state === 'converting';
+    btnRec.classList.toggle('hidden', !idle);
+    btnPause.classList.toggle('hidden', idle || busy);
+    btnStop.classList.toggle('hidden', idle || busy);
+    optSystem.disabled = optMic.disabled = optUniversal.disabled = !idle;
+    seg.querySelectorAll('button').forEach((b) => b.disabled = !idle);
+    ['rowSystem','rowMic','rowUniversal','rowQuality'].forEach((id) => el(id).classList.toggle('locked', !idle));
+    if (state === 'paused') { btnPause.classList.remove('btn-pause'); btnPause.classList.add('btn-resume'); btnPause.querySelector('span:last-child').textContent = 'Resume'; }
+    else { btnPause.classList.remove('btn-resume'); btnPause.classList.add('btn-pause'); btnPause.querySelector('span:last-child').textContent = 'Pause'; }
+  }
+
+  function updateQualityDesc() { el('qDesc').textContent = QUALITY[quality].label + ' · ' + fmtName; }
+
+  seg.addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b || b.disabled) return;
+    quality = b.dataset.q;
+    seg.querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === b));
+    updateQualityDesc();
+  });
+  optUniversal.addEventListener('change', updateFooter);
+  btnPip.addEventListener('click', openPip);
+  btnRec.addEventListener('click', () => { if (state === 'idle') start(); });
+  btnPause.addEventListener('click', togglePause);
+  btnStop.addEventListener('click', stop);
+
+  updateFooter();
+  updateQualityDesc();
+  if (!('documentPictureInPicture' in window)) btnPip.style.display = 'none';
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+    showToast('This browser cannot capture the screen. Open this file in Chrome, Edge, or another modern browser.', 'err');
+    btnRec.disabled = true;
+  }
+})();
+</script>
+</body>
+</html>
